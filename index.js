@@ -53,27 +53,21 @@ module.exports.cacheSeconds = function (secondsTTL, cacheKey) {
       key = cacheKey // custom key
     }
 
-    cacheStore.get('redirect:' + key).then((redirectKey) => {
-      if (redirectKey) {
-        res.redirect(redirectKey.status, redirectKey.url)
+    key = `response:${key}`
+
+    cacheStore.get(key).then((cachedValue) => {
+      if (cachedValue) {
+        debug('hit!!', key)
+        if (cachedValue.isRedirect) {
+          res.redirect(cachedValue.status, cachedValue.url)
+        } else if (cachedValue.isJson) {
+          res.json(cachedValue.body)
+        } else {
+          res.send(cachedValue.body)
+        }
         return true
       }
       return false
-    }).then((handledByRedirect) => {
-      if (handledByRedirect) return true
-      return cacheStore.get(key).then((value) => {
-        if (value) {
-          // returns the value immediately
-          debug('hit!!', key)
-          if (value.isJson) {
-            res.json(value.body)
-          } else {
-            res.send(value.body)
-          }
-          return true
-        }
-        return false
-      })
     }).then((handledByCache) => {
       if (handledByCache) return true
 
@@ -157,7 +151,7 @@ module.exports.cacheSeconds = function (secondsTTL, cacheKey) {
             }
           }
 
-          cacheStore.set('redirect:' + key, { url: address, status: status }, ttl)
+          cacheStore.set(key, { url: address, status: status, isRedirect: true }, ttl)
           res.original_redirect(status, address)
           return drainQueue(key)
         }
@@ -167,25 +161,20 @@ module.exports.cacheSeconds = function (secondsTTL, cacheKey) {
       } else {
         debug(key, '>> has queue.length:', queues[key].length)
         queues[key].push(function () {
-          cacheStore.get('redirect:' + key)
-            .then((redirectKey) => {
-              if (redirectKey) {
-                res.redirect(redirectKey.status, redirectKey.url)
-                return true
+          cacheStore.get(key)
+            .then((cachedValue) => {
+              if (!cachedValue) {
+                debug('>> cache miss:', key)
+                return false
               }
-              return false
-            })
-            .then((handledByRedirect) => {
-              if (handledByRedirect) return
-              return cacheStore.get(key).then((cachedValue) => {
-                const value = cachedValue || {}
-                debug('>> queued hit:', key, value.length)
-                if (value.isJson) {
-                  res.json(value.body)
-                } else {
-                  res.send(value.body)
-                }
-              })
+
+              if (cachedValue.isRedirect) {
+                res.redirect(cachedValue.status, cachedValue.url)
+              } else if (cachedValue.isJson) {
+                res.json(cachedValue.body)
+              } else {
+                res.send(cachedValue.body)
+              }
             })
         })
       }
@@ -194,8 +183,7 @@ module.exports.cacheSeconds = function (secondsTTL, cacheKey) {
 }
 
 module.exports.removeCache = function (url) {
-  cacheStore.del('redirect:' + url)
-  cacheStore.del(url)
+  cacheStore.del(`response:${url}`)
 }
 
 module.exports.cacheStore = cacheStore
